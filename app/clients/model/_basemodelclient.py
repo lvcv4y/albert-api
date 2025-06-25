@@ -30,6 +30,7 @@ from app.utils.variables import (
     ENDPOINT__OCR,
     ENDPOINT__RERANK,
 )
+from app.utils.settings import settings
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +88,7 @@ class BaseModelClient(ABC):
         redis_client = Redis(connection_pool=connection_pool)
         time_to_first_token_ts_key = f"metrics_ts:time_to_first_token:{model}:{api_url}"
         try:
-            await redis_client.timeseries.create(key=time_to_first_token_ts_key, retention=3600000)
+            await redis_client.timeseries.create(key=time_to_first_token_ts_key, retention=settings.general.metrics_retention_ms)
         except Exception as e:
             if str(e) == "TSDB: key already exists":
                 logger.debug(f"Redis timeseries {time_to_first_token_ts_key} already exists.")
@@ -97,7 +98,7 @@ class BaseModelClient(ABC):
 
         latency_ts_key = f"metrics_ts:latency:{model}:{api_url}"
         try:
-            await redis_client.timeseries.create(key=latency_ts_key, retention=3600000)
+            await redis_client.timeseries.create(key=latency_ts_key, retention=settings.general.metrics_retention_ms)
         except Exception as e:
             if str(e) == "TSDB: key already exists":
                 logger.debug(f"Redis timeseries {latency_ts_key} already exists.")
@@ -244,7 +245,9 @@ class BaseModelClient(ABC):
         time_to_first_token_ts_key = f"metrics_ts:time_to_first_token:{metric.model_name}:{metric.api_url}"
         try:
             if metric.time_to_first_token_us is not None:
-                await redis_client.timeseries.add(key=time_to_first_token_ts_key, value=metric.time_to_first_token_us, timestamp=metric.timestamp)
+                await redis_client.timeseries.add(
+                    key=time_to_first_token_ts_key, value=metric.time_to_first_token_us, timestamp=metric.timestamp
+                )
         except Exception as e:
             logger.error(f"Failed to log request metrics in redis ts {time_to_first_token_ts_key}: {e}", exc_info=True)
             await redis_client.reset()
