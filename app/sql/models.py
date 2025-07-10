@@ -124,3 +124,35 @@ class Document(Base):
     created_at = Column(DateTime, default=func.now(), nullable=False)
 
     collection = relationship(argument="Collection", backref=backref(name="document", cascade="all, delete-orphan"))
+
+class ModelRouter(Base):
+    __tablename__ = "modelrouter"
+
+    id = Column(String, primary_key=True, index=True)
+    type = Column(String, nullable=False)
+    routing_strategy = Column(String, nullable=False)
+
+class ModelRouterAlias(Base):
+    __tablename__ = "modelrouteralias"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alias = Column(String, nullable=False)
+    model_router = Column(Integer, ForeignKey(column="modelrouter.id", ondelete="CASCADE"), nullable=False)
+
+class ModelClient(Base):
+    __tablename__ = "modelclient"
+
+    id = Column(Integer, primary_key=True, index=True)
+    model = Column(String, nullable=False)
+    model_router = Column(Integer, ForeignKey(column="modelrouter.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String, nullable=False)
+    prompt_token_cost = Column(Integer)
+    completion_token_cost = Column(Integer)
+    total_parameters = Column(Integer)
+    active_parameters = Column(Integer)
+    model_zone = Column(String)
+    api_url = Column(String, nullable=False)
+    api_key = Column(String, nullable=False)
+    timeout = Column(Integer, nullable=False)
+
+    # @TODO: Add unique constraint for type + api_url + api_key 
