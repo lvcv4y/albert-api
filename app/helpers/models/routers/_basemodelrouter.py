@@ -15,6 +15,8 @@ class BaseModelRouter(ABC):
         aliases: list[str],
         routing_strategy: str,
         providers: list[ModelClient],
+        clients: list[ModelClient],
+        from_config: bool = False,
         *args,
         **kwargs,
     ) -> None:
