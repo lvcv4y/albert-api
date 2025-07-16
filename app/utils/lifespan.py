@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from coredis import ConnectionPool, Redis
 from fastapi import FastAPI
+from sqlalchemy import select, insert, delete  # Integer, cast, delete, distinct, func, insert, or_, select, update
 
 from app.clients.mcp_bridge import BaseMCPBridgeClient as MCPBridgeClient
 from app.clients.model import BaseModelClient as ModelClient
@@ -25,7 +26,10 @@ from app.schemas.core.context import GlobalContext
 from app.utils.configuration import get_configuration
 from app.utils.context import global_context
 from app.utils.logging import init_logger
-
+from app.sql.session import get_db_session
+from app.sql.models import ModelRouter as ModelRouterTable
+from app.sql.models import ModelRouterAlias as ModelRouterAliasTable
+from app.sql.models import ModelClient as ModelClientTable
 logger = init_logger(name=__name__)
 
 
@@ -45,6 +49,8 @@ async def lifespan(app: FastAPI):
     redis_test_client = Redis(connection_pool=redis)
     assert (await redis_test_client.ping()).decode("ascii") == "PONG", "Redis database is not reachable."
     assert await vector_store.check() if vector_store else True, "Vector store database is not reachable."
+    assert settings.databases.sql is not None, "SQL database connection parameters must be set in configuration."
+
 
     dependencies = SimpleNamespace(mcp_bridge=mcp_bridge, parser=parser, redis=redis, vector_store=vector_store, web_search_engine=web_search_engine)
 
@@ -64,6 +70,42 @@ async def lifespan(app: FastAPI):
 
 
 async def _setup_model_registry(configuration: Configuration, global_context: GlobalContext, dependencies: SimpleNamespace):
+    routers = []
+    async for session in get_db_session():
+        # Get all ModelRouter rows and cnvert it from a list of 1-dimensional vectors to a list of ModelRouters
+        db_routers = [row[0] for row in (await session.execute(select(ModelRouterTable))).fetchall()]
+
+        if not db_routers:
+            logger.warning(msg="no modelrouter found in database. initializing from configuration file.")
+            break
+
+        for router in db_routers:
+            # Get all ModelAlias rows and convert from a list of 1-dimensional vectors to a list of values
+            db_aliases = [
+                row[0]
+                for row in (await session.execute(select(ModelRouterAliasTable).where(ModelRouterAliasTable.model_router_id == router.id))).fetchall()
+            ]
+
+            if not db_aliases:
+                logger.info(msg=f"no alias found in database for modelrouter {router.id}.")
+
+            db_clients = [
+                row[0] for row in (await session.execute(select(ModelClientTable).where(ModelClientTable.model_router_id == router.id))).fetchall()
+            ]
+
+            if not db_clients:
+                logger.fatal(msg=f"no client model found in database for modelrouter {router['id']}.")
+                # @TODO : verify that it breaks here
+
+            clients = []
+            for client in db_clients:
+                # clients.append(ModelClient(model=client.model, costs=client.costs, carbon=client.carbon))
+                pass
+                # @TODO functional client creation from database
+
+            routers.append(
+                ModelRouter(id=router["id"], type=router["type"], aliases=db_aliases, routing_strategy=router["routing_strategy"], clients=clients)
+            )
     routers = []
     for model in configuration.models:
         providers = []
@@ -98,6 +140,42 @@ async def _setup_model_registry(configuration: Configuration, global_context: Gl
         model = model.model_dump()
         model["providers"] = providers
         routers.append(ModelRouter(**model))
+
+    async for session in get_db_session():
+        for router in routers:
+            result = await session.execute(delete(ModelRouterTable).where(ModelRouterTable.id == router.id))  # .fetchone()
+            result = await session.execute(delete(ModelRouterAliasTable).where(ModelRouterAliasTable.model_router_id == router.id))  # .fetchone()
+            await session.commit()
+
+            result = (await session.execute(select(ModelRouterTable).where(ModelRouterTable.id == router.id))).fetchone()
+
+            if not result:
+                # @TODO Check why routing strategy is private
+                await session.execute(
+                    insert(ModelRouterTable).values(id=router.id, type=router.type, routing_strategy=router._routing_strategy, from_config=True)
+                )
+
+                for alias in router.aliases:
+                    await session.execute(insert(ModelRouterAliasTable).values(alias=alias, model_router_id=router.id))
+
+                # @TODO Check why clients is private
+                for client in router._clients:
+                    await session.execute(
+                        insert(ModelClientTable).values(
+                            model=client.model,
+                            model_router_id=router.id,
+                            type=type(client).__name__.removesuffix("ModelClient").lower(),
+                            prompt_token_cost=client.costs.prompt_tokens,
+                            completion_token_cost=client.costs.completion_tokens,
+                            total_parameters=client.carbon.total_params,
+                            active_parameters=client.carbon.active_params,
+                            model_zone=client.carbon.model_zone,
+                            api_url=client.api_url,
+                            api_key=client.api_key,
+                            timeout=client.timeout,
+                        )
+                    )
+                await session.commit()
 
     global_context.model_registry = ModelRegistry(routers=routers)
 
