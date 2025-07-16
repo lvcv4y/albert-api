@@ -30,6 +30,7 @@ from app.sql.session import get_db_session
 from app.sql.models import ModelRouter as ModelRouterTable
 from app.sql.models import ModelRouterAlias as ModelRouterAliasTable
 from app.sql.models import ModelClient as ModelClientTable
+
 logger = init_logger(name=__name__)
 
 
@@ -50,7 +51,6 @@ async def lifespan(app: FastAPI):
     assert (await redis_test_client.ping()).decode("ascii") == "PONG", "Redis database is not reachable."
     assert await vector_store.check() if vector_store else True, "Vector store database is not reachable."
     assert settings.databases.sql is not None, "SQL database connection parameters must be set in configuration."
-
 
     dependencies = SimpleNamespace(mcp_bridge=mcp_bridge, parser=parser, redis=redis, vector_store=vector_store, web_search_engine=web_search_engine)
 
